@@ -1,0 +1,76 @@
+name: Check
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+    branches:
+      - main
+    paths-ignore:
+      - '.github/**' # Avoid issues with Dependabot
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '.github/**'
+
+jobs:
+  lint:
+    name: Lint scripts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check shell scripts
+        run: shellcheck scripts/*.sh
+      - name: Check sources.json
+        run: |
+          jq -e '
+            (.stage3.systemd.sha256 | test("^[0-9a-f]{64}$"))
+            and (.stage3.openrc.sha256 | test("^[0-9a-f]{64}$"))
+            and (.gentoo_repository.commit | test("^[0-9a-f]{40}$"))
+          ' sources.json
+
+  build-image:
+    name: Build and test QCOW2 image (${{ matrix.init }})
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        init: [systemd, openrc]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gdisk dosfstools qemu-utils qemu-system-x86 ovmf xorriso
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      # Pins only move through sources.json, so the stage3 and repository
+      # snapshot can be reused until the next update
+      - name: Cache downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: cache
+          key: gentoo-cache-${{ matrix.init }}-${{ hashFiles('sources.json') }}
+          restore-keys: gentoo-cache-${{ matrix.init }}-
+      - name: Build QCOW2 image
+        run: sudo ./scripts/build.sh ${{ matrix.init }}
+      - name: Boot and test image
+        run: SMOKE_LOG=serial-${{ matrix.init }}.log ./scripts/smoke-test.sh out/*.qcow2
+      - name: Upload serial log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: serial-log-${{ matrix.init }}
+          path: serial-${{ matrix.init }}.log
+          if-no-files-found: ignore

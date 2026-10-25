@@ -1,0 +1,2 @@
+# Build an initramfs with dracut and update GRUB whenever a kernel is installed.
+sys-kernel/installkernel dracut grub

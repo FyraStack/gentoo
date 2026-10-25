@@ -1,0 +1,16 @@
+{
+  "stage3": {
+    "systemd": {
+      "path": "20261018T124555Z/stage3-amd64-systemd-20261018T124555Z.tar.xz",
+      "sha256": "01ed7040d5768b5a056d3c0f7d38b0db23e8c1c4e28a57736d92ea9e30342217"
+    },
+    "openrc": {
+      "path": "20261025T170057Z/stage3-amd64-openrc-20261025T170057Z.tar.xz",
+      "sha256": "1c4abc94ce995691b4ef3474f05d9957901e3844a2034bcd2427821ffc32068f"
+    }
+  },
+  "gentoo_repository": {
+    "github": "gentoo-mirror/gentoo",
+    "commit": "fea0e3a62db38548821fe20bd4cf70e965a26561"
+  }
+}

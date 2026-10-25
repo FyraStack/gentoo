@@ -1,0 +1,3 @@
+# Members of wheel can use sudo without a password, since they log in with an
+# SSH key. Same default as our NixOS image.
+%wheel ALL=(ALL:ALL) NOPASSWD: ALL

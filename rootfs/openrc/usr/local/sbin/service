@@ -1,0 +1,4 @@
+#!/bin/sh
+# cloud-init restarts services with `service NAME ACTION`, which OpenRC doesn't
+# provide. Pass those calls to rc-service.
+exec /sbin/rc-service "$@"

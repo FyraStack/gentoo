@@ -1,0 +1,109 @@
+name: "Import published release images into Proxmox"
+
+# Runs when a release draft from publish.yaml is published, since Proxmox can only
+# download public release assets
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  push-to-proxmox:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      PROXMOX_API_URL: ${{ vars.PROXMOX_API_URL }}
+      PROXMOX_NODE: ${{ vars.PROXMOX_NODE }}
+      PROXMOX_IMPORT_STORAGE: ${{ vars.PROXMOX_IMPORT_STORAGE || 'local' }}
+      PROXMOX_TOKEN_ID: ${{ secrets.PROXMOX_TOKEN_ID }}
+      PROXMOX_TOKEN_SECRET: ${{ secrets.PROXMOX_TOKEN_SECRET }}
+    steps:
+      - name: Find release images
+        id: images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # One image per init system, named gentoo-<init>-pxmx-<version>-x86_64.qcow2
+          images=$(gh api "repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}" --jq '
+            [.assets[]
+              | select(.name | test("^gentoo-(systemd|openrc)-.*\\.qcow2$"))
+              | {
+                  filename: "gentoo-\(.name | capture("^gentoo-(?<init>[a-z]+)-").init)-\(env.RELEASE_TAG).qcow2",
+                  url: .browser_download_url,
+                  # GitHub reports asset digests as "sha256:<hex>"
+                  sha256: (.digest // "" | sub("^sha256:"; ""))
+                }]
+          ')
+          if [ "$(jq length <<<"$images")" -ne 2 ]; then
+            echo "Error: expected a systemd and an OpenRC .qcow2 asset on release ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+          echo "images=$(jq -c . <<<"$images")" >> "$GITHUB_OUTPUT"
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+      - name: Import images into Proxmox
+        env:
+          IMAGES: ${{ steps.images.outputs.images }}
+        run: |
+          api() {
+            curl --fail-with-body --silent --show-error \
+              -H "Authorization: PVEAPIToken=${PROXMOX_TOKEN_ID}=${PROXMOX_TOKEN_SECRET}" \
+              "$@"
+          }
+          base="${PROXMOX_API_URL%/}/api2/json"
+
+          # Like the dashboard, default to the first online node in name order
+          node="${PROXMOX_NODE:-$(api "${base}/nodes" | jq -r '[.data[] | select(.status == "online") | .node] | sort | first')}"
+
+          import_image() {
+            local filename=$1 url=$2 sha256=$3
+            echo "Importing ${filename} into ${PROXMOX_IMPORT_STORAGE} on ${node}"
+
+            local args=(
+              --data-urlencode "content=import"
+              --data-urlencode "filename=${filename}"
+              --data-urlencode "url=${url}"
+              --data-urlencode "verify-certificates=1"
+            )
+            if [ -n "${sha256}" ]; then
+              args+=(--data-urlencode "checksum=${sha256}" --data-urlencode "checksum-algorithm=sha256")
+            fi
+
+            local upid task status exitstatus
+            upid=$(api -X POST "${base}/nodes/${node}/storage/${PROXMOX_IMPORT_STORAGE}/download-url" "${args[@]}" | jq -r .data)
+            task="${base}/nodes/${node}/tasks/$(jq -rn --arg upid "$upid" '$upid | @uri')"
+
+            # download-url runs as a background task, so wait up to 30 minutes for it to finish
+            for _ in $(seq 180); do
+              status=$(api "${task}/status" | jq -c .data)
+              if [ "$(jq -r .status <<<"$status")" = "stopped" ]; then
+                exitstatus=$(jq -r .exitstatus <<<"$status")
+                if [ "$exitstatus" = "OK" ] || [[ "$exitstatus" == WARNINGS:* ]]; then
+                  echo "Imported ${filename} (${exitstatus})"
+                  return 0
+                fi
+                echo "Error: Proxmox task failed: ${exitstatus}" >&2
+                api "${task}/log?limit=50" | jq -r '.data[].t' >&2
+                return 1
+              fi
+              sleep 10
+            done
+
+            echo "Error: timed out waiting for Proxmox task ${upid}" >&2
+            return 1
+          }
+
+          failed=0
+          while read -r image; do
+            import_image \
+              "$(jq -r .filename <<<"$image")" \
+              "$(jq -r .url <<<"$image")" \
+              "$(jq -r .sha256 <<<"$image")" || failed=1
+          done < <(jq -c '.[]' <<<"$IMAGES")
+          exit "$failed"

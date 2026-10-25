@@ -1,0 +1,31 @@
+# Build outputs and download cache from scripts/build.sh
+/out/
+/work/
+/cache/
+*.qcow2
+*.raw
+
+.env
+.env.*
+**/.env
+**/*.env
+**/.env.*
+
+# Logs
+*.log
+
+# OS & IDE specific
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Artifacts, temporary files
+*.tar
+*.gz
+*.xz
+*.zip
+tmp/
+temp/

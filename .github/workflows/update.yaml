@@ -1,0 +1,49 @@
+name: Update sources.json
+on:
+  workflow_dispatch:
+  schedule:
+    # Every Sunday at 12:00 PM, after Gentoo's weekly stage3 builds
+    - cron: "0 12 * * 0"
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  update-sources:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Update sources.json
+        id: update
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          old=$(jq -c . sources.json)
+          ./scripts/update-sources.sh
+
+          # Summarize what moved for the pull request body
+          {
+            echo "summary<<EOF"
+            jq -r --argjson old "$old" '
+              (.stage3 | to_entries[] | select(.value.path != $old.stage3[.key].path)
+                | "- \(.key) stage3: `\($old.stage3[.key].path | split("/")[0])` → `\(.value.path | split("/")[0])`"),
+              (select(.gentoo_repository.commit != $old.gentoo_repository.commit)
+                | "- Gentoo repository: [`\($old.gentoo_repository.commit[:12])...\(.gentoo_repository.commit[:12])`](https://github.com/\(.gentoo_repository.github)/compare/\($old.gentoo_repository.commit)...\(.gentoo_repository.commit))")
+            ' sources.json
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          commit-message: "bump(sources): Update stage3 and Gentoo repository"
+          branch: "update-sources"
+          sign-commits: true
+          title: "bump(sources): Update stage3 and Gentoo repository"
+          body: |
+            Updates the pinned stage3 tarballs and Gentoo repository commit. The stage3 checksums were verified against Gentoo's release engineering signing key.
+
+            ${{ steps.update.outputs.summary }}
+          add-paths: |
+            sources.json

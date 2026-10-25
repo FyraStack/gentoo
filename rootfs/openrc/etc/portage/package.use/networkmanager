@@ -1,0 +1,2 @@
+# NetworkManager is only here so cloud-init can configure wired networking.
+net-misc/networkmanager -bluetooth -concheck -introspection -modemmanager -ppp -wext -wifi
