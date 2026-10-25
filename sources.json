@@ -1,8 +1,8 @@
 {
   "stage3": {
     "systemd": {
-      "path": "20261018T124555Z/stage3-amd64-systemd-20261018T124555Z.tar.xz",
-      "sha256": "01ed7040d5768b5a056d3c0f7d38b0db23e8c1c4e28a57736d92ea9e30342217"
+      "path": "20261025T170057Z/stage3-amd64-systemd-20261025T170057Z.tar.xz",
+      "sha256": "2cb09237b11bfae3df5c11e0e1483f0b643d1f5a69297e9478903da1c1401609"
     },
     "openrc": {
       "path": "20261025T170057Z/stage3-amd64-openrc-20261025T170057Z.tar.xz",
