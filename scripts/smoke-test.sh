@@ -76,7 +76,6 @@ write_files:
     permissions: "0755"
     content: |
       #!/bin/sh
-      exec >/dev/ttyS0 2>&1
       wait_for() {
         i=0
         while [ $i -lt 120 ]; do
@@ -86,6 +85,10 @@ write_files:
         done
         echo failed
       }
+      # Collect results in a file first, then write them to the serial port in
+      # one go. Closing the port waits for the output to drain, and the sleep is
+      # extra margin, so nothing is lost when the VM powers off right after.
+      {
       echo "SMOKE-INIT: $(cat /proc/1/comm)"
       echo "SMOKE-HOSTNAME: $(hostname)"
       echo "SMOKE-ADDR: $(ip -o -4 addr show dev eth0 | awk '{print $4}')"
@@ -94,7 +97,9 @@ write_files:
       echo "SMOKE-SSHD: $(wait_for "ss -Hltn 'sport = :22' | grep -q .")"
       echo "SMOKE-QGA: $(wait_for 'pgrep -x qemu-ga')"
       echo "SMOKE-DONE"
-      sync
+      } >/run/smoke-test.log 2>&1
+      cat /run/smoke-test.log >/dev/ttyS0
+      sleep 5
       poweroff
 runcmd:
   - [sh, -c, "nohup /usr/local/bin/smoke-test >/dev/null 2>&1 &"]
@@ -171,6 +176,8 @@ else
 fi
 
 if [[ $failed -ne 0 ]]; then
+  echo "Last 40 lines of the serial log:" >&2
+  tail -n 40 "${work}/serial.txt" >&2
   echo "Serial log saved to ${SMOKE_LOG:-smoke-test-serial.log}" >&2
   exit 1
 fi

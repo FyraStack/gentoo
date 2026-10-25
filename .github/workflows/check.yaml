@@ -60,11 +60,28 @@ jobs:
       - name: Cache downloads
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: cache
-          key: gentoo-cache-${{ matrix.init }}-${{ hashFiles('sources.json') }}
-          restore-keys: gentoo-cache-${{ matrix.init }}-
+          path: cache/downloads
+          key: gentoo-downloads-${{ matrix.init }}-${{ hashFiles('sources.json') }}
+      # Binary packages and source tarballs carry over between pins, so restore
+      # the newest cache and save a new one only when the package index changes
+      - name: Restore package cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            cache/binpkgs/${{ matrix.init }}
+            cache/distfiles
+          # Never matches exactly, so this always restores the newest cache
+          key: gentoo-packages-${{ matrix.init }}-${{ github.run_id }}
+          restore-keys: gentoo-packages-${{ matrix.init }}-
       - name: Build QCOW2 image
         run: sudo ./scripts/build.sh ${{ matrix.init }}
+      - name: Save package cache
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            cache/binpkgs/${{ matrix.init }}
+            cache/distfiles
+          key: gentoo-packages-${{ matrix.init }}-${{ hashFiles(format('cache/binpkgs/{0}/Packages', matrix.init)) }}
       - name: Boot and test image
         run: SMOKE_LOG=serial-${{ matrix.init }}.log ./scripts/smoke-test.sh out/*.qcow2
       - name: Upload serial log

@@ -3,8 +3,13 @@
 #
 # Usage: sudo scripts/build.sh <systemd|openrc> [--compress] [--size SIZE] [--output DIR]
 #
-# Needs root for loop devices, mounts, and chroot. Downloads are cached in
-# ./cache, so rebuilding with the same pins doesn't fetch anything again.
+# Needs root for loop devices, mounts, and chroot. Everything reusable is kept
+# in ./cache, so rebuilds skip downloads and only compile what changed:
+#
+#   cache/downloads        stage3 tarballs and Gentoo repository snapshots
+#   cache/distfiles        source tarballs for packages built from source
+#   cache/binpkgs/<init>   binary packages, both from Gentoo's binary package
+#                          host and built here
 
 set -euo pipefail
 
@@ -59,7 +64,12 @@ cache="${repo_root}/cache"
 work="${repo_root}/work/${init}"
 root="${work}/root"
 raw="${work}/disk.raw"
-mkdir -p "$cache/distfiles" "$output"
+downloads="${cache}/downloads"
+binpkgs="${cache}/binpkgs/${init}"
+mkdir -p "$downloads" "${cache}/distfiles" "$binpkgs" "$output"
+# Portage writes to these as the portage user (250 in the stage3). Fix the
+# owner here, since a restored CI cache is owned by the runner's user.
+chown -R 250:250 "${cache}/distfiles" "$binpkgs"
 
 # ---------------------------------------------------------------------------
 # Downloads
@@ -75,7 +85,7 @@ fetch() {
   mv "$part" "$dest"
 }
 
-stage3="${cache}/${stage3_path##*/}"
+stage3="${downloads}/${stage3_path##*/}"
 fetch "${autobuilds}/${stage3_path}" "$stage3"
 if ! sha256sum --check --status <<<"${stage3_sha256}  ${stage3}"; then
   echo "Error: checksum mismatch for ${stage3}" >&2
@@ -83,8 +93,24 @@ if ! sha256sum --check --status <<<"${stage3_sha256}  ${stage3}"; then
   exit 1
 fi
 
-repo_tarball="${cache}/gentoo-${repo_commit}.tar.gz"
+repo_tarball="${downloads}/gentoo-${repo_commit}.tar.gz"
 fetch "https://github.com/${repo_github}/archive/${repo_commit}.tar.gz" "$repo_tarball"
+
+# Remove downloads that sources.json no longer pins, so the cache doesn't grow
+# with every update. Keep the other flavor's stage3 for parallel builds.
+mapfile -t pinned < <(
+  jq -r '.stage3[].path | split("/")[-1]' "${repo_root}/sources.json"
+  echo "${repo_tarball##*/}"
+)
+for file in "$downloads"/*; do
+  [[ -e "$file" ]] || continue
+  name=${file##*/}
+  [[ "$name" == *.part ]] && continue
+  if ! printf '%s\n' "${pinned[@]}" | grep -qxF "$name"; then
+    echo ">>> Removing stale download ${name}"
+    rm -f "$file"
+  fi
+done
 
 # ---------------------------------------------------------------------------
 # Disk
@@ -147,8 +173,8 @@ chmod 0440 "${root}/etc/sudoers.d/90-wheel"
 install -m 0755 "${repo_root}/scripts/chroot-setup.sh" "${root}/root/chroot-setup.sh"
 
 # Keep downloads and build files out of the image
-mkdir -p "${work}/binpkgs" "${work}/tmp" "${root}/var/cache/binpkgs" "${root}/var/cache/distfiles" "${root}/var/tmp/portage"
-mount --bind "${work}/binpkgs" "${root}/var/cache/binpkgs"
+mkdir -p "${work}/tmp" "${root}/var/cache/binpkgs" "${root}/var/cache/distfiles" "${root}/var/tmp/portage"
+mount --bind "$binpkgs" "${root}/var/cache/binpkgs"
 mount --bind "${cache}/distfiles" "${root}/var/cache/distfiles"
 mount --bind "${work}/tmp" "${root}/var/tmp/portage"
 

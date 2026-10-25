@@ -12,6 +12,9 @@ set -u
 
 emerge_opts=(
   --getbinpkg
+  # Save anything compiled here to the binary package cache, so the next build
+  # can reuse it
+  --buildpkg
   --binpkg-respect-use=y
   --jobs="$JOBS"
   --load-average="$JOBS"
@@ -19,8 +22,17 @@ emerge_opts=(
   --verbose
 )
 export MAKEOPTS="-j${JOBS}"
-# News is for the people using the image, so don't mark it as read here
-export FEATURES="-news"
+# News is for the people using the image, so don't mark it as read here.
+#
+# Packages built here and cached between builds aren't signed, so don't require
+# signatures on every binary package during the build. Packages from Gentoo's
+# binary package host are still verified, because binrepos.conf sets
+# verify-signature = true. The image itself keeps binpkg-request-signature on.
+export FEATURES="-news -binpkg-request-signature"
+if grep -rqsiE '^\s*verify-signature\s*=\s*false' /etc/portage/binrepos.conf /usr/share/portage/config/binrepos.conf; then
+  echo "Error: a binary package host has signature verification turned off" >&2
+  exit 1
+fi
 
 echo ">>> Configuring Portage"
 cat >>/etc/portage/make.conf <<'EOF'
@@ -89,6 +101,10 @@ emerge "${emerge_opts[@]}" --noreplace --select "${packages[@]}"
 grub-mkconfig -o /boot/grub/grub.cfg
 
 emerge "${emerge_opts[@]}" --depclean
+
+# Drop cached binary packages that aren't installed anymore, so the cache only
+# holds what the next build is likely to use
+eclean-pkg --deep --quiet
 
 echo ">>> Enabling services"
 if [[ "$INIT" == systemd ]]; then
